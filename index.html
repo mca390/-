@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IJM出勤录表</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--line:#2a2f3a;--text:#e8ebf1;--muted:#8b93a7;--accent:#4f8cff;--ok:#3ecf8e}
+  *{box-sizing:border-box}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.6}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  .label{font-size:13px;color:var(--muted);margin-bottom:8px}
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:22px;text-align:center;cursor:pointer;color:var(--muted);transition:.2s}
+  .drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:rgba(79,140,255,.06)}
+  .drop.mini{padding:12px}
+  textarea{width:100%;min-height:86px;background:#0f1218;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px;font-family:inherit;font-size:13px;resize:vertical;outline:none;margin-top:8px}
+  textarea:focus{border-color:var(--accent)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;cursor:pointer;font-family:inherit;transition:.15s}
+  button:hover:not(:disabled){filter:brightness(1.12)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+  button.small{padding:5px 10px;font-size:12px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .bar{height:6px;background:#0f1218;border-radius:99px;overflow:hidden;margin-top:10px}
+  .bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+  .status{font-size:12px;color:var(--muted);margin-top:6px;min-height:18px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .badge{display:inline-block;background:rgba(62,207,142,.14);color:var(--ok);border-radius:6px;padding:0 7px;font-size:11px;margin-left:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500;cursor:pointer;user-select:none;white-space:nowrap}
+  th:hover{color:var(--text)}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:0}
+  .tag{display:inline-block;background:rgba(79,140,255,.14);color:#8fb6ff;border-radius:5px;padding:0 6px;font-size:11px;margin:1px 3px 1px 0}
+  .empty{color:var(--muted);text-align:center;padding:22px 0;font-size:13px}
+  details{margin-top:10px}
+  summary{cursor:pointer;color:var(--muted);font-size:12px}
+  pre{background:#0f1218;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:#b8c0d0;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>IJM出勤录表</h1>
+  <div class="sub">上传图片 → 识别文字 → 统计名字次数 → 导出表格</div>
+
+  <div class="card">
+    <div class="label">1. 选择考勤图片（可多选，可拖拽）</div>
+    <div class="drop" id="drop">点击选择图片，或把图片拖进来<br><span style="font-size:12px">JPG / PNG / WEBP</span></div>
+    <input type="file" id="file" accept="image/*" multiple hidden>
+    <div class="hint" id="fileList"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">2. 候选人员名单（一行一个，可上传文件）<span class="badge" id="candCount">0 个</span></div>
+    <div class="drop mini" id="dropCand">📄 点击上传名单文件（.txt / .csv / .json），或拖进来</div>
+    <input type="file" id="candFile" accept=".txt,.csv,.json,text/plain" hidden>
+    <textarea id="cands" placeholder="张三&#10;李四&#10;欧阳娜娜&#10;&#10;不填则自动从图中提取（噪声较多）"></textarea>
+    <div class="tools">
+      <button class="small ghost" id="dedupe">去重整理</button>
+      <button class="small ghost" id="clearCand">清空</button>
+      <button class="small ghost" id="downloadCand">导出名单</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="go">开始识别</button>
+      <button id="export" class="ghost" disabled>导出 CSV</button>
+      <button id="copy" class="ghost" disabled>复制表格</button>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="status" id="status">等待开始</div>
+  </div>
+
+  <div class="card">
+    <div class="label">3. 统计结果</div>
+    <div id="result"><div class="empty">还没有结果</div></div>
+    <details id="rawBox" style="display:none">
+      <summary>查看原始识别文字</summary>
+      <pre id="raw"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+(async function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+
+  /* ---------- 动态加载 OCR 引擎：优先本地，失败走 CDN ---------- */
+  let USE_LOCAL = false;
+  async function detectLocal() {
+    try {
+      const r = await fetch('lib/worker.min.js', { method: 'HEAD' });
+      return r.ok;
+    } catch { return false; }
+  }
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  async function ensureTesseract() {
+    if (window.Tesseract) return;
+    USE_LOCAL = await detectLocal();
+    const src = USE_LOCAL
+      ? 'lib/tesseract.min.js'
+      : 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    try { await loadScript(src); }
+    catch { await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'); USE_LOCAL = false; }
+  }
+  const OCR_PATHS = () => USE_LOCAL
+    ? { workerPath: 'lib/worker.min.js', corePath: 'lib/', langPath: 'tessdata/' }
+    : {
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0/'
+      };
+
+  /* ---------- 图像预处理 ---------- */
+  const loadImage = src => new Promise((res, rej) => {
+    const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src;
+  });
+  async function preprocess(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await loadImage(url);
+      const scale = Math.min(3, Math.max(1, 1600 / img.width));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * scale);
+      cv.height = Math.round(img.height * scale);
+      const ctx = cv.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      for (let i = 0; i < d.length; i += 4) {
+        let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        g = Math.max(0, Math.min(255, (g - 128) * 1.35 + 128));
+        d[i] = d[i + 1] = d[i + 2] = g;
+      }
+      ctx.putImageData(new ImageData(d, cv.width, cv.height), 0, 0);
+      return cv;
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  /* ---------- 编辑距离 ---------- */
+  function lev(a, b) {
+    const m = a.length, n = b.length;
+    if (!m) return n; if (!n) return m;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      for (let j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  /* ---------- 名单解析 ---------- */
+  function parseNameList(text, ext) {
+    const out = [];
+    const push = v => {
+      if (v == null) return;
+      const s = String(v).trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').replace(/\s+/g, '');
+      if (s.length < 2 || s.length > 8) return;
+      if (!/[\u4e00-\u9fa5A-Za-z·•.]/.test(s)) return;
+      if (/^(姓名|名字|name|姓名列表)$/i.test(s)) return;
+      out.push(s);
+    };
+    if (ext === 'json') {
+      let arr; try { arr = JSON.parse(text); } catch { arr = null; }
+      if (Array.isArray(arr)) {
+        arr.forEach(it => {
+          if (typeof it === 'string') push(it);
+          else if (it && typeof it === 'object') push(it.name ?? it['姓名'] ?? it['名字'] ?? Object.values(it).find(x => typeof x === 'string'));
+        });
+        return out;
+      }
+    }
+    text.split(/\r?\n/).forEach(line => line.split(/[,，\t;；|]/).forEach(push));
+    return out;
+  }
+  function mergeNames(existing, incoming) {
+    const base = existing.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const seen = new Set(base);
+    incoming.forEach(n => { if (!seen.has(n)) { seen.add(n); base.push(n); } });
+    return base.join('\n');
+  }
+  function updateCandCount() {
+    const n = $('cands').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
+    $('candCount').textContent = n + ' 个';
+  }
+
+  /* ---------- 统计 ---------- */
+  function addHit(stats, name, file) {
+    let e = stats.get(name);
+    if (!e) { e = { count: 0, files: new Set() }; stats.set(name, e); }
+    e.count++; if (file) e.files.add(file);
+  }
+  function matchWithCandidates(text, candidates, file, stats, fuzzy) {
+    const chars = Array.from(text);
+    const used = new Uint8Array(chars.length);
+    const names = [...new Set(candidates)].filter(s => Array.from(s).length >= 2)
+      .sort((a, b) => Array.from(b).length - Array.from(a).length);
+    for (const name of names) {
+      const nc = Array.from(name), L = nc.length;
+      const tol = fuzzy ? (L >= 3 ? 1 : 0) : 0;
+      for (let i = 0; i + L <= chars.length; i++) {
+        let busy = false;
+        for (let k = i; k < i + L; k++) if (used[k]) { busy = true; break; }
+        if (busy) continue;
+        const win = chars.slice(i, i + L);
+        const winStr = win.join('');
+        let hit = winStr === name;
+        if (!hit && tol > 0 && win[0] === nc[0] && lev(win, nc) <= tol) hit = true;
+        if (hit) {
+          addHit(stats, name, file);
+          for (let k = i; k < i + L; k++) used[k] = 1;
+        }
+      }
+    }
+  }
+  const SURNAMES = "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤";
+  function autoExtract(text, file, stats) {
+    const re = new RegExp(`[${SURNAMES}][\\u4e00-\\u9fa5]{1,2}`, 'g');
+    text.split(/\r?\n/).forEach(line => {
+      const clean = line.replace(/[\s\d.,、:：;；|_\-—()（）\[\]【】「」]/g, '');
+      if (!clean) return;
+      if (/^[\u4e00-\u9fa5]{2,4}$/.test(clean) && SURNAMES.includes(clean[0])) {
+        addHit(stats, clean, file); return;
+      }
+      let m; re.lastIndex = 0;
+      while ((m = re.exec(clean)) !== null) addHit(stats, m[0], file);
+    });
+  }
+
+  /* ---------- 图片选择 ---------- */
+  let pickedFiles = [], lastRows = [];
+  const drop = $('drop'), fileInput = $('file');
+  drop.onclick = () => fileInput.click();
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = e => {
+    e.preventDefault(); drop.classList.remove('over');
+    setFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')));
+  };
+  fileInput.onchange = () => setFiles([...fileInput.files]);
+  function setFiles(list) {
+    pickedFiles = list;
+    $('fileList').textContent = list.length
+      ? `已选 ${list.length} 张：` + list.map(f => f.name).join('、') : '';
+  }
+
+  /* ---------- 名单上传 ---------- */
+  const dropCand = $('dropCand'), candFile = $('candFile');
+  dropCand.onclick = () => candFile.click();
+  dropCand.ondragover = e => { e.preventDefault(); dropCand.classList.add('over'); };
+  dropCand.ondragleave = () => dropCand.classList.remove('over');
+  dropCand.ondrop = e => {
+    e.preventDefault(); dropCand.classList.remove('over');
+    const f = e.dataTransfer.files[0]; if (f) readCandFile(f);
+  };
+  candFile.onchange = () => {
+    const f = candFile.files[0]; if (f) readCandFile(f); candFile.value = '';
+  };
+  async function readCandFile(file) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    try {
+      const names = parseNameList(await file.text(), ext);
+      if (!names.length) { $('status').textContent = `「${file.name}」未解析出有效名字`; return; }
+      const before = $('cands').value.split(/\r?\n/).filter(s => s.trim()).length;
+      $('cands').value = mergeNames($('cands').value, names);
+      updateCandCount();
+      const after = $('cands').value.split(/\r?\n/).filter(s => s.trim()).length;
+      $('status').textContent = `从「${file.name}」读取 ${names.length} 个，新增 ${after - before} 个（共 ${after}）`;
+    } catch (err) { $('status').textContent = '读取失败：' + err.message; }
+  }
+  $('cands').addEventListener('input', updateCandCount);
+  $('dedupe').onclick = () => {
+    const list = [...new Set(parseNameList($('cands').value, 'txt'))];
+    $('cands').value = list.join('\n'); updateCandCount();
+    $('status').textContent = `已去重，共 ${list.length} 个`;
+  };
+  $('clearCand').onclick = () => {
+    if (!$('cands').value.trim() || !confirm('确定清空名单？')) return;
+    $('cands').value = ''; updateCandCount();
+  };
+  $('downloadCand').onclick = () => {
+    const list = $('cands').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (!list.length) return alert('名单为空');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + list.join('\r\n')], { type: 'text/plain;charset=utf-8' }));
+    a.download = '候选名单.txt'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  /* ---------- 识别主流程 ---------- */
+  $('go').onclick = async () => {
+    if (!pickedFiles.length) return alert('请先选择图片');
+    const btn = $('go');
+    btn.disabled = true; $('export').disabled = true; $('copy').disabled = true;
+    $('prog').style.width = '0';
+    $('status').textContent = '正在加载识别引擎（首次约 10-20 秒）…';
+
+    try { await ensureTesseract(); }
+    catch { $('status').textContent = '引擎加载失败，请检查网络或本地 lib/ 文件'; btn.disabled = false; return; }
+
+    const candidates = $('cands').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const stats = new Map();
+    let allText = '', worker;
+    try {
+      worker = await Tesseract.createWorker('chi_sim', 1, {
+        ...OCR_PATHS(),
+        logger: m => {
+          if (m.status === 'recognizing text') $('prog').style.width = Math.round(m.progress * 100) + '%';
+          else if (m.status.includes('loading')) $('status').textContent = '加载语言包… ' + Math.round((m.progress || 0) * 100) + '%';
+        }
+      });
+      for (let i = 0; i < pickedFiles.length; i++) {
+        const f = pickedFiles[i];
+        $('status').textContent = `识别中 (${i + 1}/${pickedFiles.length})：${f.name}`;
+        const canvas = await preprocess(f);
+        const { data } = await worker.recognize(canvas);
+        const txt = data.text || '';
+        allText += `\n===== ${f.name} =====\n` + txt;
+        if (candidates.length) matchWithCandidates(txt, candidates, f.name, stats, true);
+        else autoExtract(txt, f.name, stats);
+      }
+      await worker.terminate();
+    } catch (err) {
+      $('status').textContent = '出错：' + err.message;
+      btn.disabled = false;
+      if (worker) try { await worker.terminate(); } catch {}
+      return;
+    }
+
+    render(stats);
+    $('raw').textContent = allText.trim();
+    $('rawBox').style.display = 'block';
+    $('status').textContent = candidates.length
+      ? `完成，识别 ${pickedFiles.length} 张，命中名单 ${stats.size} 个名字`
+      : `完成，自动提取 ${stats.size} 个候选名字（建议上传名单提高准确率）`;
+    $('prog').style.width = '100%';
+    btn.disabled = false;
+    $('export').disabled = stats.size === 0;
+    $('copy').disabled = stats.size === 0;
+  };
+
+  /* ---------- 渲染 ---------- */
+  function render(stats) {
+    const box = $('result');
+    if (!stats.size) {
+      box.innerHTML = '<div class="empty">没有识别到名字，试试更清晰的图片，或上传候选名单</div>';
+      lastRows = []; return;
+    }
+    const rows = [...stats.entries()]
+      .map(([name, v]) => ({ name, count: v.count, files: [...v.files] }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh'));
+    const total = rows.reduce((s, r) => s + r.count, 0);
+    lastRows = rows;
+
+    let html = `<table><thead><tr>
+      <th data-k="name">名字</th><th class="num" data-k="count">次数</th>
+      <th class="num">占比</th><th>出现于</th>
+    </tr></thead><tbody>`;
+    for (const r of rows) {
+      const pct = total ? (r.count / total * 100).toFixed(1) + '%' : '-';
+      const files = r.files.length
+        ? r.files.map(f => `<span class="tag">${esc(f)}</span>`).join('')
+        : '<span style="color:#8b93a7">-</span>';
+      html += `<tr><td>${esc(r.name)}</td><td class="num">${r.count}</td><td class="num">${pct}</td><td>${files}</td></tr>`;
+    }
+    box.innerHTML = html + '</tbody></table>';
+
+    box.querySelectorAll('th[data-k]').forEach(th => {
+      th.onclick = () => {
+        const k = th.dataset.k;
+        lastRows = [...lastRows].sort((a, b) =>
+          k === 'count' ? b.count - a.count : a.name.localeCompare(b.name, 'zh'));
+        const m = new Map(lastRows.map(r => [r.name, { count: r.count, files: new Set(r.files) }]));
+        render(m);
+      };
+    });
+  }
+  const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  /* ---------- 导出 ---------- */
+  $('export').onclick = () => {
+    if (!lastRows.length) return;
+    const lines = [['名字', '出现次数', '出现于'], ...lastRows.map(r => [r.name, r.count, r.files.join(' / ')])];
+    const csv = '\ufeff' + lines.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const d = new Date();
+    a.download = `人名统计_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.csv`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('copy').onclick = async () => {
+    if (!lastRows.length) return;
+    const txt = ['名字\t次数', ...lastRows.map(r => `${r.name}\t${r.count}`)].join('\n');
+    try { await navigator.clipboard.writeText(txt); $('status').textContent = '已复制，可粘贴进 Excel'; }
+    catch { $('status').textContent = '复制失败，请用「导出 CSV」'; }
+  };
+
+  updateCandCount();
+})();
+</script>
+</body>
+</html>
